@@ -171,10 +171,15 @@ if analyze_btn:
         expected_loss = loan_amount * pd_value * lgd_rate
 
         # --- LOGIKA KEPUTUSAN OJK (MEMANGGIL rules.py) ---
+        # UPGRADE: Sekarang memasukkan income, loan_amount, dan dti_ratio
+        # untuk risk adjustment dan dynamic threshold
         kol_str, decision, decision_color, reason = hitung_kolektibilitas_ojk(
-            pd_value=pd_value, 
-            hari_tunggakan=hari_tunggakan, 
-            riwayat_default=riwayat_default
+            pd_value=pd_value,
+            hari_tunggakan=hari_tunggakan,
+            riwayat_default=riwayat_default,
+            income=income,
+            loan_amount=loan_amount,
+            dti_ratio=dti_ratio
         )
 
         # --- 4. TATA LETAK HASIL ---

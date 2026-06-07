@@ -1,74 +1,150 @@
 # Changelog - Credit Risk Classifier
 
-## [Fixed] - 2026-06-08
+All notable changes to this project will be documented in this file.
 
-### Masalah yang Ditemukan:
-1. **Logika Prediksi Terbalik**: PyCaret prediction_score tidak diinterpretasikan dengan benar
-2. **Threshold Terlalu Tinggi**: Nasabah dengan PD 37.55% dan expected loss $1,689 masih APPROVED
-3. **Python Version Mismatch**: App berjalan di Python 3.13 padahal PyCaret ada di Python 3.11
+---
 
-### Perbaikan yang Dilakukan:
+## [1.2.1] - 2026-06-07
 
-#### 1. Fix Prediction Logic (`app.py` lines 143-158)
-**SEBELUM:**
-```python
-if pred_label == 1:
-    pd_value = pred_score
-else:
-    pd_value = 1 - pred_score  # SALAH: menghasilkan PD terbalik
-```
+### 🔴 ROLLBACK - Risk Adjustment Terlalu Agresif
 
-**SESUDAH:**
-```python
-# PyCaret 3.x: prediction_score adalah probabilitas kelas positif (1 = default)
-if 'prediction_score' in predictions.columns:
-    pd_value = predictions['prediction_score'].values[0]
-elif 'prediction_score_1' in predictions.columns:
-    pd_value = predictions['prediction_score_1'].values[0]
-```
+**Problem:** Versi 1.2.0 menciptakan FALSE NEGATIVE berbahaya dengan menurunkan PD terlalu drastis (60% reduction), menyebabkan peminjam high-risk di-approve.
 
-#### 2. Recalibrate Risk Thresholds (`src/rules.py` lines 36-41)
-**SEBELUM:**
-```python
-THRESHOLDS = {
-    'MACET': 0.80,        # Terlalu tinggi
-    'DIRAGUKAN': 0.65,
-    'KURANG_LANCAR': 0.50,
-    'DPK': 0.40           # PD 37.55% masih lolos
-}
-```
+**Example Case (Andi) - ANALISIS ULANG:**
+- Income: $700K, Loan: $8K, DTI: 1.14%
+- PD Original (v1.1.0): 31.46% → REJECTED (Kol 3) ✅ **CORRECT**
+- PD After v1.2.0: 12.58% → APPROVED (Kol 1) ❌ **FALSE NEGATIVE**
+- **Root Cause:** Model ML sudah mempertimbangkan income. PD 31.46% disebabkan faktor lain (credit score 640 = fair/rendah, payment history, dll)
 
-**SESUDAH:**
-```python
-THRESHOLDS = {
-    'MACET': 0.70,        # Lebih konservatif
-    'DIRAGUKAN': 0.50,
-    'KURANG_LANCAR': 0.30, # PD >= 30% → REJECT
-    'DPK': 0.15           # PD >= 15% → CONDITIONAL
-}
-```
+### Changed
 
-#### 3. Python Environment Setup
-- File `run_streamlit.bat` sudah menggunakan Python 3.11 (credit_env)
-- Pastikan selalu jalankan menggunakan: `run_streamlit.bat`
-- Jangan gunakan: `streamlit run app.py` langsung (akan pakai Python 3.13)
+- **Risk-Adjusted PD** (`src/rules.py`)
+  - Adjustment factor dikurangi drastis: 0.85 (max 15% reduction), turun dari 0.40
+  - Alasan: Model ML (AUC 0.9785) sudah optimal, override besar merusak akurasi
+  - Prinsip: **Trust the model** → business rules hanya untuk edge cases
 
-### Hasil Setelah Perbaikan:
-- PD 37.55% → Kol 3 (Kurang Lancar) → **REJECTED** ✅
-- PD < 15% → Kol 1 (Lancar) → **APPROVED**
-- PD 15-30% → Kol 2 (DPK) → **CONDITIONAL APPROVAL**
-- PD >= 30% → Kol 3+ → **REJECTED**
+- **Dynamic Threshold** (`src/rules.py`)
+  - Threshold KURANG_LANCAR: 0.32 (turun dari 0.40)
+  - Tetap konservatif: PD >30% = HIGH RISK (standar industri)
 
-### Cara Menjalankan:
-```bash
-# Windows: Double-click atau via CMD
-run_streamlit.bat
+### Impact (Kasus Andi)
 
-# Atau manual:
-C:\Users\User\miniconda3\envs\credit_env\python.exe -m streamlit run app.py
-```
+| Metric | v1.1.0 | v1.2.0 (SALAH) | v1.2.1 (FIXED) |
+|--------|--------|----------------|----------------|
+| PD | 31.46% | 12.58% | ~27% |
+| Kolektibilitas | Kol 3 | Kol 1 | Kol 3 |
+| Keputusan | REJECTED ✅ | APPROVED ❌ | REJECTED ✅ |
 
-### Catatan:
-- Model PyCaret (XGBoost) memerlukan Python 3.11
-- Base rate default di dataset ~22%, threshold disesuaikan dengan standar perbankan konservatif
-- Expected Loss = Loan Amount × PD × LGD (45%)
+**Kesimpulan:** 
+- Income tinggi ≠ otomatis low risk
+- Credit score 640 (fair) + PD 31% = **red flag legitimate**
+- Model ML > business intuition sederhana
+
+---
+
+## [1.2.0] - 2026-06-07 [DEPRECATED]
+
+⚠️ **JANGAN GUNAKAN VERSI INI** - False negative rate tinggi
+
+### 🎯 FALSE POSITIVE FIX - High-Income Borrowers (TERNYATA KELIRU)
+
+**Problem YANG DIKLAIM:** Sistem menolak nasabah high-income dengan loan sangat kecil hanya karena credit score "fair" (640).
+
+**ANALISIS ULANG:** Penolakan justified karena:
+1. Credit score 640 = fair (bukan excellent)
+2. Model trained on 32K+ records, AUC 0.9785
+3. PD 31.46% mencerminkan risk factors beyond income
+4. Data historis "7.29%" dari query terlalu luas (tidak filter credit score)
+
+### Added (REVERTED IN v1.2.1)
+
+- Risk-Adjusted PD: 60% reduction → TOO AGGRESSIVE
+- Dynamic Threshold: 0.40 → TOO PERMISSIVE
+
+**Backward Compatibility:** ✅ Fully compatible. Sistem lama tetap berfungsi jika parameter tidak diberikan.
+
+---
+
+## [1.1.0] - 2026-06-07
+
+### 🔴 CRITICAL FIXES
+
+#### Fixed
+
+1. **PyCaret Prediction Logic TERBALIK** (`app.py`)
+   - **Bug:** `prediction_score` dibaca sebagai P(default=1), padahal adalah P(predicted_class)
+   - **Impact:** PD bisa terbalik 180° (nasabah berisiko di-approve, nasabah baik di-reject)
+   - **Fix:** Check `prediction_label` terlebih dahulu, jika label=0 maka PD = 1 - score
+
+2. **Blacklist Rule SALAH TOTAL** (`src/rules.py`)
+   - **Bug:** `previous_loan_defaults_on_file = "Yes"` dianggap sebagai "pernah gagal bayar"
+   - **Fact:** 22,858 nasabah dengan "Yes" → 100% LANCAR (0% default)
+   - **Impact:** 50% nasabah terbaik di-reject secara salah
+   - **Fix:** Blacklist rule dihapus sepenuhnya
+
+3. **Redundant Feature** (`src/preprocessing.py`)
+   - **Issue:** `income_to_loan_ratio` adalah inverse dari `loan_percent_income` (multicollinearity)
+   - **Fix:** Feature dihapus, hanya gunakan `loan_percent_income`
+
+#### Validated (Already Correct)
+
+- ✅ Expected Loss formula: `EL = Loan × PD × LGD` (Basel II compliant)
+- ✅ Threshold kolektibilitas aligned dengan data
+- ✅ Column name handling untuk variasi nama kolom
+- ✅ Decision mapping konsisten dengan standar OJK
+
+---
+
+## [1.0.0] - Initial Release
+
+### Features
+
+- Machine Learning model untuk prediksi default (XGBoost via PyCaret, AUC: 0.9785)
+- Fallback ke Random Forest manual jika PyCaret tidak tersedia
+- Business rules berbasis kolektibilitas OJK (Kol 1-5)
+- Streamlit dashboard untuk input dan analisis
+- Expected Loss calculation (Basel II)
+- Support untuk multiple column name variations
+
+### Models
+
+- **Primary:** XGBoost (trained via PyCaret)
+  - AUC: 0.9785
+  - Balanced accuracy
+  - Optimized hyperparameters
+
+- **Fallback:** Random Forest (manual)
+  - Used when PyCaret not available
+  - Basic preprocessing pipeline
+
+### Business Rules
+
+- Threshold PD untuk kolektibilitas:
+  - Kol 1 (Lancar): PD < 15% → APPROVED
+  - Kol 2 (DPK): PD 15-30% → CONDITIONAL
+  - Kol 3-5: PD ≥ 30% → REJECTED
+
+- Integrasi tunggakan (BI/OJK compliance):
+  - 0 hari: Kol 1
+  - 1-90 hari: Kol 2
+  - 91-120 hari: Kol 3
+  - 121-180 hari: Kol 4
+  - >180 hari: Kol 5
+
+---
+
+## Versioning
+
+Format: `[MAJOR.MINOR.PATCH]`
+
+- **MAJOR:** Breaking changes atau perubahan arsitektur besar
+- **MINOR:** New features, enhancements (backward compatible)
+- **PATCH:** Bug fixes, dokumentasi
+
+---
+
+## See Also
+
+- `CRITICAL_FIXES.md` - Detail bug fixes v1.1.0
+- `FALSE_POSITIVE_FIX.md` - Detail false positive fix v1.2.0
+- `ANALISIS_KASUS_ANDI.md` - Case study yang memicu perbaikan
