@@ -45,7 +45,7 @@ def test_andi_case():
     print(f"  Hari Tunggakan: {hari_tunggakan}")
 
     # Panggil fungsi kolektibilitas
-    kol_str, decision, decision_color, reason = hitung_kolektibilitas_ojk(
+    kol_str, decision, decision_color, reason, pd_final = hitung_kolektibilitas_ojk(
         pd_value=pd_from_model,
         hari_tunggakan=hari_tunggakan,
         riwayat_default=riwayat_default,
@@ -55,6 +55,7 @@ def test_andi_case():
     )
 
     print(f"\nHasil:")
+    print(f"  PD Final (setelah adjustment): {pd_final:.2%}")
     print(f"  Kolektibilitas: {kol_str}")
     print(f"  Keputusan: {decision}")
     print(f"  Alasan: {reason}")
@@ -90,7 +91,7 @@ def test_normal_high_income():
     print(f"  PD dari Model: {pd_from_model:.2%}")
     print(f"  Riwayat Default: {riwayat_default}")
 
-    kol_str, decision, decision_color, reason = hitung_kolektibilitas_ojk(
+    kol_str, decision, decision_color, reason, pd_final = hitung_kolektibilitas_ojk(
         pd_value=pd_from_model,
         hari_tunggakan=hari_tunggakan,
         riwayat_default=riwayat_default,

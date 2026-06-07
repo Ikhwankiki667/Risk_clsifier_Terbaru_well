@@ -148,7 +148,10 @@ def hitung_kolektibilitas_ojk(pd_value, hari_tunggakan, riwayat_default='No',
     }
 
     # Safe Return (Fallback jika final_kol di luar 1-5)
-    return mapping.get(
-        final_kol, 
+    result = mapping.get(
+        final_kol,
         ("Tidak Diketahui", "⚠️ ERROR", "error", "Terjadi kesalahan pada sistem pemetaan kolektibilitas.")
     )
+
+    # Return tuple dengan adjusted PD sebagai elemen ke-5
+    return result + (pd_value,)
