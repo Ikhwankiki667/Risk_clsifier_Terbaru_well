@@ -145,12 +145,13 @@ if analyze_btn:
             # PyCaret model: gunakan predict_model
             predictions = predict_model(model_data, data=input_raw)
 
-            # PyCaret 3.x mengembalikan prediction_score sebagai probabilitas untuk kelas yang diprediksi
+            # CRITICAL FIX: prediction_score adalah probabilitas untuk kelas yang DIPREDIKSI
+            # Bukan selalu probabilitas untuk kelas 1 (default)
             pred_label = predictions['prediction_label'].values[0]
             pred_score = predictions['prediction_score'].values[0]
 
-            # Jika prediksi = 1 (default), maka score adalah PD
-            # Jika prediksi = 0 (approved), maka PD = 1 - score
+            # Jika diprediksi default (label=1), score sudah benar sebagai PD
+            # Jika diprediksi lancar (label=0), PD = 1 - score
             if pred_label == 1:
                 pd_value = pred_score
             else:

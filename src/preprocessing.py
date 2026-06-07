@@ -71,11 +71,12 @@ class DataPreprocessor:
         # --- TAHAP 1C: FEATURE ENGINEERING (NEW!) ---
         # Buat fitur turunan yang memiliki prediksi power lebih tinggi
 
-        # 1. Income to Loan Ratio (semakin tinggi = semakin aman)
-        if 'person_income' in df_clean.columns and 'loan_amnt' in df_clean.columns:
-            df_clean['income_to_loan_ratio'] = df_clean['person_income'] / (df_clean['loan_amnt'] + 1)
+        # REMOVED: income_to_loan_ratio (redundant dengan loan_percent_income yang sudah ada)
+        # Alasan: loan_percent_income = loan_amnt / person_income (DTI ratio)
+        #         income_to_loan_ratio = 1 / loan_percent_income (inverse redundancy)
+        # Keeping this causes multicollinearity issues
 
-        # 2. Debt Burden (beban cicilan per tahun)
+        # 1. Debt Burden (beban cicilan per tahun berdasarkan interest rate)
         if all(col in df_clean.columns for col in ['loan_amnt', 'loan_int_rate', 'person_income']):
             df_clean['debt_burden'] = (df_clean['loan_amnt'] * df_clean['loan_int_rate'] / 100) / (df_clean['person_income'] + 1)
 

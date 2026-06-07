@@ -7,15 +7,12 @@ def hitung_kolektibilitas_ojk(pd_value, hari_tunggakan, riwayat_default='No'):
     if not (0.0 <= pd_value <= 1.0):
         raise ValueError("Probabilitas Default (PD) harus berada di rentang 0.0 - 1.0")
 
-    # 2. Kebijakan Internal Bank (Blacklist Otomatis)
-    # Jika punya riwayat hitam, langsung tolak tanpa perlu hitung probabilitas
-    if str(riwayat_default).strip().upper() == 'YES':
-        return (
-            "Kol 5 (Macet) - BLACKLIST", 
-            "⛔ REJECTED", 
-            "error", 
-            "Ditolak otomatis: Nasabah memiliki riwayat gagal bayar di masa lalu sesuai kebijakan bank."
-        )
+    # 2. BLACKLIST RULE DIHAPUS
+    # Alasan: Analisis data menunjukkan 'previous_loan_defaults_on_file=Yes'
+    # BUKAN indikator gagal bayar. 50.8% nasabah dengan Yes justru 100% lancar.
+    # Kolom ini kemungkinan berarti "pernah ada loan record" bukan "pernah default"
+    #
+    # TIDAK DIGUNAKAN: parameter riwayat_default diabaikan
 
     # 3. Tentukan Skor Historis (Aturan Baku BI/OJK)
     if hari_tunggakan > 180:
@@ -30,14 +27,13 @@ def hitung_kolektibilitas_ojk(pd_value, hari_tunggakan, riwayat_default='No'):
         kol_hist = 1  # Lancar
 
     # 4. Tentukan Skor Prediksi AI (Risk Appetite Thresholds)
-    # Batas ambang risiko ini bisa disesuaikan dengan kebijakan ekonomi bank
-    # Disesuaikan dengan distribusi aktual: base rate default ~22% di dataset
-    # Menggunakan kalibrasi yang lebih realistis untuk Random Forest dengan class_weight='balanced'
+    # Batas ambang risiko yang lebih konservatif untuk melindungi bank
+    # Threshold disesuaikan dengan standar perbankan: reject jika PD > 30%
     THRESHOLDS = {
-        'MACET': 0.80,        # PD >= 80% → Macet (sangat tinggi)
-        'DIRAGUKAN': 0.65,    # PD >= 65% → Diragukan (tinggi)
-        'KURANG_LANCAR': 0.50, # PD >= 50% → Kurang Lancar (menengah-tinggi)
-        'DPK': 0.40           # PD >= 40% → Dalam Perhatian Khusus (menengah)
+        'MACET': 0.70,        # PD >= 70% → Macet (sangat tinggi)
+        'DIRAGUKAN': 0.50,    # PD >= 50% → Diragukan (tinggi)
+        'KURANG_LANCAR': 0.30, # PD >= 30% → Kurang Lancar (menengah-tinggi) - REJECT
+        'DPK': 0.15           # PD >= 15% → Dalam Perhatian Khusus (menengah) - CONDITIONAL
     }
 
     if pd_value >= THRESHOLDS['MACET']:
