@@ -5,6 +5,8 @@ from sklearn.preprocessing import StandardScaler, OneHotEncoder
 from sklearn.impute import SimpleImputer
 from sklearn.pipeline import Pipeline
 
+from src.balancer import smote, smote_tomek, smote_enn
+
 class DataPreprocessor:
     """
     Kelas Modular untuk membersihkan dan mentransformasi data mentah
@@ -123,7 +125,23 @@ class DataPreprocessor:
 
         # Eksekusi pemrosesan data X
         X_processed = self.preprocessor.fit_transform(X)
-        
+
+        # --- TAHAP 3: BALANCER IMBALANCED DATA (IF/ELSE CONDITION) ---
+        if y.nunique() == 2:
+            minority_ratio = y.value_counts(normalize=True).min()
+
+            if minority_ratio < 0.12:
+                X_processed, y = smote_enn(X_processed, y)
+                print("INFO: Imbalanced dataset terdeteksi (<12% minority). Menggunakan SMOTEENN.")
+            elif minority_ratio < 0.30:
+                X_processed, y = smote_tomek(X_processed, y)
+                print("INFO: Imbalanced dataset terdeteksi (<30% minority). Menggunakan SMOTE + Tomek Links.")
+            elif minority_ratio < 0.40:
+                X_processed, y = smote(X_processed, y)
+                print("INFO: Imbalanced dataset sedang. Menggunakan SMOTE.")
+            else:
+                print("INFO: Distribusi kelas relatif seimbang. Balancing tidak diterapkan.")
+
         return X_processed, y
 
     def transform(self, df_input):

@@ -9,6 +9,10 @@ import pandas as pd
 import os
 import time
 import plotly.graph_objects as go
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.linear_model import LogisticRegression
+from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, roc_auc_score
+from xgboost import XGBClassifier
 
 # --- IMPORT MODULE LOKAL SELALU DI LUAR TRY-EXCEPT ---
 # Agar sistem Fallback selalu kenal dengan fungsi-fungsi ini
@@ -25,31 +29,78 @@ except ImportError:
 
 st.set_page_config(page_title="Credit Risk Analysis System", page_icon="🏦", layout="wide")
 
+
+def compute_metrics(y_true, y_pred, y_prob):
+    return {
+        'accuracy': accuracy_score(y_true, y_pred),
+        'precision': precision_score(y_true, y_pred, zero_division=0),
+        'recall': recall_score(y_true, y_pred, zero_division=0),
+        'f1': f1_score(y_true, y_pred, zero_division=0),
+        'roc_auc': roc_auc_score(y_true, y_prob) if y_prob is not None else 0.0
+    }
+
+
+def _print_evaluation_summary(results):
+    print("\n" + "="*60)
+    print(" EVALUASI TOP 3 ALGORITMA PYCARET / MANUAL")
+    print("="*60)
+    for result in results:
+        print(
+            f"{result['name']} -> Accuracy: {result['accuracy']:.4f}, "
+            f"Precision: {result['precision']:.4f}, Recall: {result['recall']:.4f}, "
+            f"F1: {result['f1']:.4f}, ROC AUC: {result['roc_auc']:.4f}"
+        )
+    print("="*60 + "\n")
+
+
+def evaluate_top_algorithms(df, pycaret_pipeline=None):
+    df = df.dropna(subset=['loan_status']).copy()
+    raw_X = df.drop('loan_status', axis=1)
+    y = df['loan_status']
+
+    preprocessor = DataPreprocessor()
+    X_processed, y_processed = preprocessor.fit_transform(df)
+
+    evaluation_results = []
+
+    if pycaret_pipeline is not None:
+        try:
+            y_pred = pycaret_pipeline.predict(raw_X)
+            y_prob = pycaret_pipeline.predict_proba(raw_X)[:, 1]
+        except Exception:
+            y_prob = None
+        evaluation_results.append({
+            'name': 'PyCaret XGBoost',
+            **compute_metrics(y, y_pred, y_prob)
+        })
+
+    candidate_models = [
+        ('Random Forest', RandomForestClassifier(class_weight='balanced', random_state=42)),
+        ('XGBoost (manual)', XGBClassifier(use_label_encoder=False, eval_metric='logloss', random_state=42)),
+        ('Logistic Regression', LogisticRegression(max_iter=1000, class_weight='balanced', solver='liblinear', random_state=42))
+    ]
+
+    for name, model in candidate_models:
+        model.fit(X_processed, y_processed)
+        y_pred = model.predict(X_processed)
+        y_prob = model.predict_proba(X_processed)[:, 1] if hasattr(model, 'predict_proba') else None
+        evaluation_results.append({
+            'name': name,
+            **compute_metrics(y_processed, y_pred, y_prob)
+        })
+
+    # Pastikan urutan tertinggi berdasarkan ROC AUC
+    evaluation_results.sort(key=lambda entry: entry['roc_auc'], reverse=True)
+    _print_evaluation_summary(evaluation_results)
+
+    best_result = evaluation_results[0] if evaluation_results else None
+    return evaluation_results, best_result
+
 # --- 1. TAHAP LOAD MODEL ---
 @st.cache_resource
 def load_system():
-    """Load model PyCaret atau fallback ke Random Forest manual"""
+    """Load model PyCaret atau fallback ke Random Forest manual."""
 
-    # Coba load model PyCaret terlebih dahulu
-    if PYCARET_AVAILABLE and os.path.exists("models/best_pycaret_model.pkl"):
-        try:
-            model = load_model('models/best_pycaret_model')
-
-            # Load dataset untuk template
-            file_path = "loan_data.csv"
-            if not os.path.exists(file_path) and os.path.exists("data/loan_data.csv"):
-                file_path = "data/loan_data.csv"
-
-            df = pd.read_csv(file_path)
-            df = df.dropna(subset=['loan_status'])
-            X = df.drop('loan_status', axis=1)
-            template_df = X.iloc[[0]].copy()
-
-            return model, template_df, "PyCaret", "Sistem Siap! (Model: XGBoost - AUC 0.9785)"
-        except Exception as e:
-            st.warning(f"Gagal load model PyCaret: {e}. Menggunakan Random Forest manual...")
-
-    # Fallback: Train Random Forest manual
     file_path = "loan_data.csv"
     if not os.path.exists(file_path) and os.path.exists("data/loan_data.csv"):
         file_path = "data/loan_data.csv"
@@ -58,25 +109,44 @@ def load_system():
         df = pd.read_csv(file_path)
         df = df.dropna(subset=['loan_status'])
     except FileNotFoundError:
-        return None, None, None, "File loan_data.csv tidak ditemukan!"
+        return None, None, None, "File loan_data.csv tidak ditemukan!", [], None
 
     X = df.drop('loan_status', axis=1)
     template_df = X.iloc[[0]].copy()
+
+    if PYCARET_AVAILABLE and os.path.exists("models/best_pycaret_model.pkl"):
+        try:
+            model = load_model('models/best_pycaret_model')
+            evaluation_results, best_model = evaluate_top_algorithms(df, pycaret_pipeline=model)
+            return model, template_df, "PyCaret", "Sistem Siap! (Model: XGBoost - AUC 0.9785)", evaluation_results, best_model
+        except Exception as e:
+            st.warning(f"Gagal load model PyCaret: {e}. Menggunakan Random Forest manual...")
 
     preprocessor = DataPreprocessor()
     X_processed, y = preprocessor.fit_transform(df)
 
     model = CreditRiskModel()
     model.train(X_processed, y)
+    evaluation_results, best_model = evaluate_top_algorithms(df, pycaret_pipeline=None)
 
-    return (preprocessor, model), template_df, "RandomForest", "Sistem Siap! (Model: Random Forest Manual)"
+    return (preprocessor, model), template_df, "RandomForest", "Sistem Siap! (Model: Random Forest Manual)", evaluation_results, best_model
 
-model_data, template_df, model_type, status_msg = load_system()
+model_data, template_df, model_type, status_msg, evaluation_results, best_model = load_system()
 
 # --- 2. TAHAP UI & INPUT DASHBOARD ---
 st.title("🏦 Credit Risk Analysis System")
 st.markdown("Sistem Penilaian Risiko Pinjaman Berbasis Machine Learning")
 st.markdown(f"**{status_msg}**")
+
+if best_model is not None:
+    st.markdown("### 🔍 Ringkasan Evaluasi Model")
+    st.markdown(f"**Algoritma Terbaik:** {best_model['name']} dengan ROC AUC **{best_model['roc_auc']:.3f}**")
+    st.markdown("Model metrics dihitung pada data training / dataset yang tersedia.")
+    if len(evaluation_results) > 0:
+        metrics_df = pd.DataFrame(evaluation_results)[['name','accuracy','precision','recall','f1','roc_auc']].round(4)
+        metrics_df.columns = ['Model', 'Accuracy', 'Precision', 'Recall', 'F1', 'ROC AUC']
+        st.table(metrics_df)
+
 st.divider()
 
 if model_data is None:
@@ -139,6 +209,14 @@ if analyze_btn:
             input_raw['cb_person_default_on_file'] = 'Y' if riwayat_default == 'Yes' else 'N'
         elif 'previous_loan_defaults_on_file' in input_raw.columns:
             input_raw['previous_loan_defaults_on_file'] = riwayat_default
+
+        if riwayat_default == 'Yes' or hari_tunggakan > 0:
+            warning_text = []
+            if riwayat_default == 'Yes':
+                warning_text.append("Nasabah memiliki riwayat gagal bayar sebelumnya dan harus diperlakukan konservatif sesuai prinsip OJK/BI.")
+            if hari_tunggakan > 0:
+                warning_text.append(f"Nasabah memiliki tunggakan saat ini sebesar {hari_tunggakan} hari, yang secara langsung memengaruhi kolektibilitas.")
+            st.warning(" ".join(warning_text))
 
         # PREDIKSI berdasarkan tipe model
         if model_type == "PyCaret":
