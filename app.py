@@ -13,6 +13,7 @@ from datetime import datetime
 import plotly.graph_objects as go
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.linear_model import LogisticRegression
+from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, roc_auc_score
 from xgboost import XGBClassifier
 
@@ -58,41 +59,42 @@ def _print_evaluation_summary(results):
     print("="*60 + "\n")
 
 
-def evaluate_top_algorithms(df, pycaret_pipeline=None):
-    df = df.dropna(subset=['loan_status']).copy()
-    raw_X = df.drop('loan_status', axis=1)
-    y = df['loan_status']
-
-    preprocessor = DataPreprocessor()
-    X_processed, y_processed = preprocessor.fit_transform(df)
-
+def evaluate_top_algorithms(
+    X_train_processed=None,
+    y_train=None,
+    X_test_processed=None,
+    y_test=None,
+    X_test_raw=None,
+    pycaret_pipeline=None
+):
     evaluation_results = []
 
-    if pycaret_pipeline is not None:
+    if pycaret_pipeline is not None and X_test_raw is not None and y_test is not None:
         try:
-            y_pred = pycaret_pipeline.predict(raw_X)
-            y_prob = pycaret_pipeline.predict_proba(raw_X)[:, 1]
+            y_pred = pycaret_pipeline.predict(X_test_raw)
+            y_prob = pycaret_pipeline.predict_proba(X_test_raw)[:, 1]
         except Exception:
             y_prob = None
         evaluation_results.append({
             'name': 'PyCaret XGBoost',
-            **compute_metrics(y, y_pred, y_prob)
+            **compute_metrics(y_test, y_pred, y_prob)
         })
 
-    candidate_models = [
-        ('Random Forest', RandomForestClassifier(class_weight='balanced', random_state=42)),
-        ('XGBoost (manual)', XGBClassifier(use_label_encoder=False, eval_metric='logloss', random_state=42)),
-        ('Logistic Regression', LogisticRegression(max_iter=1000, class_weight='balanced', solver='liblinear', random_state=42))
-    ]
+    if X_train_processed is not None and y_train is not None and X_test_processed is not None and y_test is not None:
+        candidate_models = [
+            ('Random Forest', RandomForestClassifier(class_weight='balanced', random_state=42)),
+            ('XGBoost (manual)', XGBClassifier(use_label_encoder=False, eval_metric='logloss', random_state=42)),
+            ('Logistic Regression', LogisticRegression(max_iter=1000, class_weight='balanced', solver='liblinear', random_state=42))
+        ]
 
-    for name, model in candidate_models:
-        model.fit(X_processed, y_processed)
-        y_pred = model.predict(X_processed)
-        y_prob = model.predict_proba(X_processed)[:, 1] if hasattr(model, 'predict_proba') else None
-        evaluation_results.append({
-            'name': name,
-            **compute_metrics(y_processed, y_pred, y_prob)
-        })
+        for name, model in candidate_models:
+            model.fit(X_train_processed, y_train)
+            y_pred = model.predict(X_test_processed)
+            y_prob = model.predict_proba(X_test_processed)[:, 1] if hasattr(model, 'predict_proba') else None
+            evaluation_results.append({
+                'name': name,
+                **compute_metrics(y_test, y_pred, y_prob)
+            })
 
     evaluation_results.sort(key=lambda entry: entry['roc_auc'], reverse=True)
     _print_evaluation_summary(evaluation_results)
@@ -115,23 +117,43 @@ def load_system():
     except FileNotFoundError:
         return None, None, None, "File loan_data.csv tidak ditemukan!", [], None
 
+    train_df, test_df = train_test_split(
+        df,
+        test_size=0.20,
+        stratify=df['loan_status'],
+        random_state=42
+    )
+
     X = df.drop('loan_status', axis=1)
     template_df = X.iloc[[0]].copy()
 
     if PYCARET_AVAILABLE and os.path.exists("models/best_pycaret_model.pkl"):
         try:
             model = load_model('models/best_pycaret_model')
-            evaluation_results, best_model = evaluate_top_algorithms(df, pycaret_pipeline=model)
+            evaluation_results, best_model = evaluate_top_algorithms(
+                X_test_raw=test_df.drop('loan_status', axis=1),
+                y_test=test_df['loan_status'],
+                pycaret_pipeline=model
+            )
             return model, template_df, "PyCaret", "Sistem Siap! (Model: XGBoost - AUC 0.9785)", evaluation_results, best_model
         except Exception as e:
             st.warning(f"Gagal load model PyCaret: {e}. Menggunakan Random Forest manual...")
 
     preprocessor = DataPreprocessor()
-    X_processed, y = preprocessor.fit_transform(df)
+    X_train_processed, y_train = preprocessor.fit_transform(train_df)
+    X_test_processed = preprocessor.transform(test_df.drop('loan_status', axis=1))
+    y_test = test_df['loan_status']
 
     model = CreditRiskModel()
-    model.train(X_processed, y)
-    evaluation_results, best_model = evaluate_top_algorithms(df, pycaret_pipeline=None)
+    model.train(X_train_processed, y_train)
+    evaluation_results, best_model = evaluate_top_algorithms(
+        X_train_processed=X_train_processed,
+        y_train=y_train,
+        X_test_processed=X_test_processed,
+        y_test=y_test,
+        X_test_raw=None,
+        pycaret_pipeline=None
+    )
 
     return (preprocessor, model), template_df, "RandomForest", "Sistem Siap! (Model: Random Forest Manual)", evaluation_results, best_model
 
@@ -370,7 +392,7 @@ with tab_metrics:
     if best_model is not None:
         st.markdown("### 🔍 Ringkasan Evaluasi Model")
         st.markdown(f"**Algoritma Terbaik:** {best_model['name']} dengan ROC AUC **{best_model['roc_auc']:.3f}**")
-        st.markdown("Model metrics dihitung pada data training / dataset yang tersedia.")
+        st.markdown("Model metrics dihitung pada data holdout test yang dipisahkan sebelum pelatihan.")
         if len(evaluation_results) > 0:
             metrics_df = pd.DataFrame(evaluation_results)[['name','accuracy','precision','recall','f1','roc_auc']].round(4)
             metrics_df.columns = ['Model', 'Accuracy', 'Precision', 'Recall', 'F1', 'ROC AUC']

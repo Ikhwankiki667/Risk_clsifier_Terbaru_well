@@ -168,11 +168,7 @@ class DataPreprocessor:
 
         # --- REPLIKASI FEATURE ENGINEERING (HARUS SAMA DENGAN fit_transform!) ---
 
-        # 1. Income to Loan Ratio
-        if 'person_income' in df_transformed.columns and 'loan_amnt' in df_transformed.columns:
-            df_transformed['income_to_loan_ratio'] = df_transformed['person_income'] / (df_transformed['loan_amnt'] + 1)
-
-        # 2. Debt Burden
+        # 1. Debt Burden
         if all(col in df_transformed.columns for col in ['loan_amnt', 'loan_int_rate', 'person_income']):
             df_transformed['debt_burden'] = (df_transformed['loan_amnt'] * df_transformed['loan_int_rate'] / 100) / (df_transformed['person_income'] + 1)
 
