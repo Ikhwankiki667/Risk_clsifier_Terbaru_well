@@ -69,6 +69,7 @@ def evaluate_top_algorithms(
 ):
     evaluation_results = []
 
+    # Evaluasi PyCaret model jika tersedia
     if pycaret_pipeline is not None and X_test_raw is not None and y_test is not None:
         try:
             y_pred = pycaret_pipeline.predict(X_test_raw)
@@ -80,21 +81,25 @@ def evaluate_top_algorithms(
             **compute_metrics(y_test, y_pred, y_prob)
         })
 
+    # SELALU evaluasi model manual untuk perbandingan
     if X_train_processed is not None and y_train is not None and X_test_processed is not None and y_test is not None:
         candidate_models = [
-            ('Random Forest', RandomForestClassifier(class_weight='balanced', random_state=42)),
+            ('Random Forest', RandomForestClassifier(class_weight='balanced', random_state=42, n_estimators=100)),
             ('XGBoost (manual)', XGBClassifier(use_label_encoder=False, eval_metric='logloss', random_state=42)),
             ('Logistic Regression', LogisticRegression(max_iter=1000, class_weight='balanced', solver='liblinear', random_state=42))
         ]
 
         for name, model in candidate_models:
-            model.fit(X_train_processed, y_train)
-            y_pred = model.predict(X_test_processed)
-            y_prob = model.predict_proba(X_test_processed)[:, 1] if hasattr(model, 'predict_proba') else None
-            evaluation_results.append({
-                'name': name,
-                **compute_metrics(y_test, y_pred, y_prob)
-            })
+            try:
+                model.fit(X_train_processed, y_train)
+                y_pred = model.predict(X_test_processed)
+                y_prob = model.predict_proba(X_test_processed)[:, 1] if hasattr(model, 'predict_proba') else None
+                evaluation_results.append({
+                    'name': name,
+                    **compute_metrics(y_test, y_pred, y_prob)
+                })
+            except Exception as e:
+                print(f"Warning: Failed to evaluate {name}: {e}")
 
     evaluation_results.sort(key=lambda entry: entry['roc_auc'], reverse=True)
     _print_evaluation_summary(evaluation_results)
@@ -130,9 +135,20 @@ def load_system():
     if PYCARET_AVAILABLE and os.path.exists("models/best_pycaret_model.pkl"):
         try:
             model = load_model('models/best_pycaret_model')
+
+            # Prepare processed data untuk evaluasi model manual
+            preprocessor = DataPreprocessor()
+            X_train_processed, y_train = preprocessor.fit_transform(train_df)
+            X_test_processed = preprocessor.transform(test_df.drop('loan_status', axis=1))
+            y_test = test_df['loan_status']
+
+            # Evaluasi semua model (PyCaret + manual)
             evaluation_results, best_model = evaluate_top_algorithms(
+                X_train_processed=X_train_processed,
+                y_train=y_train,
+                X_test_processed=X_test_processed,
+                y_test=y_test,
                 X_test_raw=test_df.drop('loan_status', axis=1),
-                y_test=test_df['loan_status'],
                 pycaret_pipeline=model
             )
             return model, template_df, "PyCaret", "Sistem Siap! (Model: XGBoost - AUC 0.9785)", evaluation_results, best_model
@@ -388,15 +404,37 @@ with tab_analytics:
 # ============================================================================
 with tab_metrics:
     st.header("📈 Model Evaluation Metrics")
-    
-    if best_model is not None:
-        st.markdown("### 🔍 Ringkasan Evaluasi Model")
-        st.markdown(f"**Algoritma Terbaik:** {best_model['name']} dengan ROC AUC **{best_model['roc_auc']:.3f}**")
-        st.markdown("Model metrics dihitung pada data holdout test yang dipisahkan sebelum pelatihan.")
-        if len(evaluation_results) > 0:
-            metrics_df = pd.DataFrame(evaluation_results)[['name','accuracy','precision','recall','f1','roc_auc']].round(4)
-            metrics_df.columns = ['Model', 'Accuracy', 'Precision', 'Recall', 'F1', 'ROC AUC']
-            st.table(metrics_df)
+
+    if len(evaluation_results) > 0:
+        st.markdown("### 🔍 Top 3 Algorithm Performance")
+        st.markdown("Metrik evaluasi dihitung pada data holdout test yang dipisahkan sebelum pelatihan.")
+
+        # Ambil top 3 algoritma berdasarkan ROC AUC (sudah disort di evaluate_top_algorithms)
+        top_3_results = evaluation_results[:3]
+
+        # Tampilkan informasi best model
+        if best_model is not None:
+            st.success(f"🏆 **Best Model:** {best_model['name']} dengan ROC AUC **{best_model['roc_auc']:.4f}**")
+
+        # Buat tabel untuk top 3
+        metrics_df = pd.DataFrame(top_3_results)[['name','accuracy','precision','recall','f1','roc_auc']].round(4)
+        metrics_df.columns = ['Model', 'Accuracy', 'Precision', 'Recall', 'F1-Score', 'ROC AUC']
+        metrics_df.index = ['🥇 Rank 1', '🥈 Rank 2', '🥉 Rank 3'][:len(metrics_df)]
+
+        st.table(metrics_df)
+
+        # Tampilkan detail masing-masing model
+        st.markdown("#### 📊 Detail Performance per Model")
+        cols = st.columns(min(3, len(top_3_results)))
+        for idx, result in enumerate(top_3_results):
+            with cols[idx]:
+                rank_emoji = ['🥇', '🥈', '🥉'][idx]
+                st.markdown(f"**{rank_emoji} {result['name']}**")
+                st.metric("ROC AUC", f"{result['roc_auc']:.4f}")
+                st.metric("Accuracy", f"{result['accuracy']:.4f}")
+                st.metric("F1-Score", f"{result['f1']:.4f}")
+    else:
+        st.warning("Tidak ada hasil evaluasi model yang tersedia.")
     
     st.divider()
     st.header("📋 Session Analysis History (JSON)")
